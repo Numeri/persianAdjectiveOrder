@@ -19,11 +19,15 @@ import sys
 from docopt import docopt
 from typing import Counter, Dict, List, Tuple
 
-def collect_adjective_chains(sentences : List[str]):
+def collect_adjective_chains(sentences : List[str], progress = False):
     adj_chains = {}
     tagger = hazm.POSTagger(model='resources/postagger.model')
 
-    for s in sentences:
+    numSentences = len(sentences)
+
+    for i,s in enumerate(sentences):
+        if progress and i % (numSentences//200) == 0:
+            print(f'Sentences analyzed: {100.0*i/numSentences}%, {i}/{numSentences}')
         tags = tagger.tag(hazm.word_tokenize(s))
         chain = []
         prevWordAdj = False
@@ -59,11 +63,6 @@ def collect_adjective_chains(sentences : List[str]):
 
     return adj_chains
 
-def export_adj_chains(outfile, adj_chains, chain_length : int):
-    writer = csv.writer(outfile)
-    writer.writerow(['Adj ' + str(i+1) for i in range(chain_length)] + ['Frequency'])
-    writer.writerows([[word for word in chain] + [count] for chain, count in adj_chains[chain_length].items()])
-
 def analyze_adjective_position(adj_chains : Dict[int, Counter[str]]):
     data = collections.Counter()
 
@@ -75,6 +74,18 @@ def analyze_adjective_position(adj_chains : Dict[int, Counter[str]]):
     df = pandas.DataFrame(columns=['chain-length', 'position', 'frequency', 'word'], data=([cl, p, f, w] for (cl, p, w), f in data.items()))
     return df, data
 
+def export_adj_chains(filename, adj_chains, chain_length : int):
+    with open(filename, 'w') as outfile:
+        writer = csv.writer(outfile)
+        writer.writerow(['Adj ' + str(i+1) for i in range(chain_length)] + ['Frequency'])
+        writer.writerows([[word for word in chain] + [count] for chain, count in adj_chains[chain_length].items()])
+
+def export_adj_position(filename, df):
+    with open(filename, 'w') as outfile:
+        df_ = df[df['chain-length'] > 1]
+        outfile.write(df_.to_csv(index=False))
+
+# Main code
 arguments = docopt(__doc__, version='Persian Adjective Analysis 0.1')
 
 filenames = arguments['<file>']
@@ -90,5 +101,5 @@ sentences = hazm.sent_tokenize(corpus_text)
 print(f'{len(sentences)} total')
 
 print('Analyzing adjective usage...')
-adj_chains = collect_adjective_chains(sentences)
+adj_chains = collect_adjective_chains(sentences, progress=True)
 
