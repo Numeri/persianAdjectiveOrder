@@ -63,7 +63,7 @@ def collect_adjective_chains(sentences : List[str], progress = False):
 
     return adj_chains
 
-def analyze_adjective_position(adj_chains : Dict[int, Counter[str]]):
+def create_adj_position_df(adj_chains : Dict[int, Counter[str]]):
     data = collections.Counter()
 
     for chain_length in adj_chains.keys():
@@ -74,13 +74,52 @@ def analyze_adjective_position(adj_chains : Dict[int, Counter[str]]):
     df = pandas.DataFrame(columns=['chain-length', 'position', 'frequency', 'word'], data=([cl, p, f, w] for (cl, p, w), f in data.items()))
     return df, data
 
+def create_markov_chain_df(adj_chains : Dict[int, Counter[str]], normalise=True):
+    # Map each word to a number, starting with the null marker as 0
+    mapping = {None: 0}
+
+    # Build the map while counting adjectives (plus the null marker)
+    adj_count = 1
+    for chain_length in adj_chains.keys():
+        if chain_length > 1:
+            for chain, _ in adj_chains[chain_length].items():
+                for word in chain:
+                    # If the word has not yet been encountered, add it to the next empty index in the mapping
+                    if mapping.get(word) is None:
+                        mapping[word] = adj_count
+                        adj_count += 1
+
+    # One row and column for each of the adjectives (plus the null marker)
+    # Each row will contain the probability that each adjective follows that # adjective (or the null marker, if the adjective began the chain)
+    data = [[0.0 for _ in range(adj_count)] for _ in range(adj_count)]
+
+    for chain_length in adj_chains.keys():
+        if chain_length > 1:
+            for chain, chain_freq in adj_chains[chain_length].items():
+                prev_word_index = 0
+                for word in chain:
+                    word_index = mapping[word]
+                    data[prev_word_index][word_index] += chain_freq
+                    prev_word_index = word_index
+
+    def normalise(row : pandas.core.series.Series):
+        total = row.sum()
+        return row / total if total > 0 else 0.0
+
+    adjs = list(mapping.keys())
+    df = pandas.DataFrame(columns=adjs, index=adjs, data=data)
+    if normalise:
+        df = df.apply(normalise, axis=1)
+
+    return df
+
 def export_adj_chains(filename, adj_chains, chain_length : int):
     with open(filename, 'w') as outfile:
         writer = csv.writer(outfile)
         writer.writerow(['Adj ' + str(i+1) for i in range(chain_length)] + ['Frequency'])
         writer.writerows([[word for word in chain] + [count] for chain, count in adj_chains[chain_length].items()])
 
-def export_adj_position(filename, df):
+def export_adj_position_df(filename, df):
     with open(filename, 'w') as outfile:
         df_ = df[df['chain-length'] > 1]
         outfile.write(df_.to_csv(index=False))
@@ -102,4 +141,5 @@ print(f'{len(sentences)} total')
 
 print('Analyzing adjective usage...')
 adj_chains = collect_adjective_chains(sentences, progress=True)
+markov_chain_df = create_markov_chain_df(adj_chains, normalise=False)
 
