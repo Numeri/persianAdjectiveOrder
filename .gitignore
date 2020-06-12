@@ -1,2 +1,4 @@
 resources
 *.swp
+__pycache__
+data/*.dump
