@@ -2,18 +2,24 @@
 """Analyze Persian adjective use
 
 Usage:
-  analyze.py <file>...
+  analyze.py -r <file>...
+  analyze.py -l <file>
   analyze.py -h
 
 Options:
   -h --help                       Show this screen.
+  -r --read                       Read in files.
+  -l --load                       Load in a dump.
 
 """
 
 import collections
 import csv
 import hazm
+import math
 import pandas
+import pickle 
+import random
 import sys
 
 from docopt import docopt
@@ -102,16 +108,38 @@ def create_markov_chain_df(adj_chains : Dict[int, Counter[str]], normalise=True)
                     data[prev_word_index][word_index] += chain_freq
                     prev_word_index = word_index
 
-    def normalise(row : pandas.core.series.Series):
+    def normalise_func(row : pandas.core.series.Series):
         total = row.sum()
         return row / total if total > 0 else 0.0
 
     adjs = list(mapping.keys())
     df = pandas.DataFrame(columns=adjs, index=adjs, data=data)
     if normalise:
-        df = df.apply(normalise, axis=1)
+        df = df.apply(normalise_func, axis=1)
 
     return df
+
+def cost_function(markov_chain_list, adj_group_vector : List[int]):
+    cost = 0
+    num_adj = len(adj_group_vector)
+
+    if num_adj != len(markov_chain_df.index):
+        raise Exception("Adjective grouping vector length does not match the number of adjectives")
+
+    for first_word_index in range(num_adj):
+        for second_word_index in range(num_adj):
+            # If the preceeding word's group is lower in precedence than
+            # the following word's then add to the cost
+            if adj_group_vector[first_word_index] > adj_group_vector[second_word_index]:
+                cost += markov_chain_list[first_word_index][second_word_index]
+            elif adj_group_vector[first_word_index] == adj_group_vector[second_word_index]:
+                cost += 0.25 * markov_chain_list[first_word_index][second_word_index]
+
+    num_groups = max(adj_group_vector) + (1 if min(adj_group_vector) == 0 else 0)
+    if num_groups > 2:
+        cost *= math.log(num_groups)
+
+    return cost
 
 def export_adj_chains(filename, adj_chains, chain_length : int):
     with open(filename, 'w') as outfile:
@@ -124,22 +152,35 @@ def export_adj_position_df(filename, df):
         df_ = df[df['chain-length'] > 1]
         outfile.write(df_.to_csv(index=False))
 
+def serialize_adj_chains(adj_chains, filename):
+    with open(filename, 'wb') as outfile:
+        pickle.dump(adj_chains, outfile, protocol=pickle.HIGHEST_PROTOCOL)
+
 # Main code
 arguments = docopt(__doc__, version='Persian Adjective Analysis 0.1')
+adj_chains = None
+markov_chain_df = None
 
-filenames = arguments['<file>']
-corpus_text = ""
+if arguments['--read']:
+    filenames = arguments['<file>']
+    corpus_text = ""
 
-for i, name in enumerate(filenames):
-    with open(name) as infile:
+    for i, name in enumerate(filenames):
+        with open(name) as infile:
             corpus_text += '\n'.join(infile.readlines())
             print(f'Finished reading file {i+1}/{len(filenames)}:\t{name}')
 
-print('Tokenizing sentences: ', end='')
-sentences = hazm.sent_tokenize(corpus_text)
-print(f'{len(sentences)} total')
+    print('Tokenizing sentences: ', end='')
+    sentences = hazm.sent_tokenize(corpus_text)
+    print(f'{len(sentences)} total')
 
-print('Analyzing adjective usage...')
-adj_chains = collect_adjective_chains(sentences, progress=True)
+    print('Analyzing adjective usage...')
+    adj_chains = collect_adjective_chains(sentences, progress=True)
+elif arguments['--load']:
+    filename = arguments['<file>'][0]
+    with open(filename, 'rb') as infile:
+        adj_chains = pickle.load(infile)
+
 markov_chain_df = create_markov_chain_df(adj_chains, normalise=False)
+markov_chain_list = markov_chain_df.values.tolist()
 
